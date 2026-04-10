@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -29,16 +23,23 @@ model Paste {
   
   // Image support
   hasImage   Boolean   @default(false) @map("has_image")
-  imageKey   String?   @map("image_key") // R2 object key
-  imageUrl   String?   @map("image_url") // Public URL for the image
+  imageKey   String?   @map("image_key")
+  imageUrl   String?   @map("image_url")
   imageMimeType String? @map("image_mime_type")
-  imageSize  Int?      @map("image_size") // Size in bytes
+  imageSize  Int?      @map("image_size")
   imageWidth Int?      @map("image_width")
   imageHeight Int?     @map("image_height")
-  originalFormat String? @map("original_format") // Original image format (e.g., 'png', 'jpeg')
-  originalMimeType String? @map("original_mime_type") // Original MIME type
-  exifData   Json?    @map("exif_data") // EXIF metadata from the image
-  pasteType  String    @default("text") @map("paste_type") // Type of paste: 'text' or 'image'
+  originalFormat String? @map("original_format")
+  originalMimeType String? @map("original_mime_type")
+  exifData   Json?    @map("exif_data")
+  pasteType  String    @default("text") @map("paste_type")
+
+  // File upload support
+  fileKey    String?   @map("file_key")
+  fileUrl    String?   @map("file_url")
+  fileName   String?   @map("file_name")
+  fileSize   BigInt?   @map("file_size")
+  fileMimeType String? @map("file_mime_type")
 
   @@map("pastes")
   @@index([language])

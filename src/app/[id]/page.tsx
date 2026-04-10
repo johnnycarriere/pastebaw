@@ -28,6 +28,10 @@ interface Paste {
   originalMimeType?: string;
   pasteType?: string;
   exifData?: Record<string, unknown> | null;
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number | null;
+  fileMimeType?: string;
 }
 
 export default function PastePage() {

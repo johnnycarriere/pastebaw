@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPaste } from '@/lib/services/paste-service';
 import sharp from 'sharp';
+import fs from 'fs';
+import path from 'path';
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
 
 export async function GET(
   request: NextRequest,
@@ -12,8 +16,53 @@ export async function GET(
       return NextResponse.json({ error: 'Paste ID is required' }, { status: 400 });
     }
 
-    const format = request.nextUrl.searchParams.get('format') || 'original';
     const paste = await getPaste({ id });
+
+    // Handle file downloads
+    if (paste.pasteType === 'file' && paste.fileUrl) {
+      const fileKey = (paste as any).fileKey;
+      
+      // Try to read from local filesystem first
+      if (fileKey) {
+        const filePath = path.join(UPLOAD_DIR, fileKey);
+        if (fs.existsSync(filePath)) {
+          const fileBuffer = fs.readFileSync(filePath);
+          const fileName = paste.fileName || 'download';
+          const mimeType = paste.fileMimeType || 'application/octet-stream';
+
+          return new NextResponse(fileBuffer, {
+            headers: {
+              'Content-Type': mimeType,
+              'Content-Disposition': `attachment; filename="${fileName}"`,
+              'Content-Length': fileBuffer.length.toString(),
+              'Cache-Control': 'public, max-age=31536000',
+            },
+          });
+        }
+      }
+
+      // Fallback: fetch from URL
+      const fileResponse = await fetch(paste.fileUrl);
+      if (!fileResponse.ok) {
+        return NextResponse.json({ error: 'Failed to fetch file' }, { status: 500 });
+      }
+
+      const fileBuffer = Buffer.from(await fileResponse.arrayBuffer());
+      const fileName = paste.fileName || 'download';
+      const mimeType = paste.fileMimeType || 'application/octet-stream';
+
+      return new NextResponse(fileBuffer, {
+        headers: {
+          'Content-Type': mimeType,
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+          'Content-Length': fileBuffer.length.toString(),
+          'Cache-Control': 'public, max-age=31536000',
+        },
+      });
+    }
+
+    // Handle image downloads (existing logic)
+    const format = request.nextUrl.searchParams.get('format') || 'original';
 
     if (!paste.hasImage || !paste.imageUrl) {
       return NextResponse.json({ error: 'Not an image paste' }, { status: 400 });
@@ -58,7 +107,6 @@ export async function GET(
         targetFormat = 'avif';
         break;
       default:
-        // Default to JPEG for unknown formats
         outputBuffer = await sharpImage.jpeg({ quality: 90, mozjpeg: true }).toBuffer();
         mimeType = 'image/jpeg';
         targetFormat = 'jpg';

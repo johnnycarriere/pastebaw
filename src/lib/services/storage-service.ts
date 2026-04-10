@@ -3,11 +3,17 @@ import fs from 'fs';
 import path from 'path';
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-const PUBLIC_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pastebaw.duckdns.org';
+const PUBLIC_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://pastebaw.bawapps.com';
 
 export function generateImageKey(extension: string = 'webp'): string {
   const uuid = uuidv4();
   return `images/${uuid}.${extension}`;
+}
+
+export function generateFileKey(originalFilename: string): string {
+  const uuid = uuidv4();
+  const ext = path.extname(originalFilename).toLowerCase() || '.bin';
+  return `files/${uuid}${ext}`;
 }
 
 export async function uploadToR2(

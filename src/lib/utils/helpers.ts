@@ -14,9 +14,15 @@ export function cn(...inputs: ClassValue[]) {
  */
 export function generatePasteId(
   language: string = 'plaintext',
-  options?: { pasteType?: string; originalFormat?: string }
+  options?: { pasteType?: string; originalFormat?: string; fileName?: string }
 ): string {
   const id = nanoid(8);
+
+  // For file pastes, use the original file extension
+  if (options?.pasteType === 'file' && options?.fileName) {
+    const ext = options.fileName.split('.').pop()?.toLowerCase() || 'bin';
+    return `${id}.${ext}`;
+  }
 
   // For image pastes, use the original format as the extension
   if (options?.pasteType === 'image' && options?.originalFormat) {

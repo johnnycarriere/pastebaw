@@ -5,7 +5,7 @@ import { hashPassword, comparePassword } from '../utils/password-utils';
 import { shouldCompress, compressText, decompressText } from '../utils/compression';
 import { compressImage, validateImage } from '../utils/image-compression';
 import { extractExifData } from '../utils/exif-extractor';
-import { generateImageKey, uploadToR2, deleteFromR2 } from './storage-service';
+import { generateImageKey, generateFileKey, uploadToR2, deleteFromR2 } from './storage-service';
 import { CreatePasteInput, GetPasteInput } from '../validations';
 import { generateTitleAndDescription } from './gemini-service';
 
@@ -36,6 +36,11 @@ interface Paste {
   originalMimeType?: string;
   pasteType: string;
   exifData?: Record<string, unknown> | null;
+  fileKey?: string;
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: bigint | null;
+  fileMimeType?: string;
 }
 
 const recentViews = new Map<string, number>();
@@ -80,7 +85,7 @@ export async function createPaste(data: CreatePasteInput) {
     let finalContent = content;
     let shouldCompressContent = false;
 
-    if (content) {
+    if (content && data.pasteType !== 'file') {
       if (isFormattable(data.language)) {
         content = await formatCode(content, data.language);
         finalContent = content;
@@ -98,9 +103,14 @@ export async function createPaste(data: CreatePasteInput) {
       passwordHash = await hashPassword(data.password);
     }
 
-    const defaultTitle = `${data.language.charAt(0).toUpperCase() + data.language.slice(1)} Paste`;
-    const defaultDescription = 'Generating description...';
+    const defaultTitle = data.pasteType === 'file'
+      ? (data.fileName || 'File Upload')
+      : `${data.language.charAt(0).toUpperCase() + data.language.slice(1)} Paste`;
+    const defaultDescription = data.pasteType === 'file'
+      ? 'A file shared via PasteBaw'
+      : 'Generating description...';
 
+    // Handle image uploads
     let imageData: {
       hasImage?: boolean;
       imageKey?: string;
@@ -140,7 +150,6 @@ export async function createPaste(data: CreatePasteInput) {
       });
 
       const imageKey = generateImageKey(compressed.format);
-
       const imageUrl = await uploadToR2(compressed.buffer, imageKey, compressed.mimeType);
 
       imageData = {
@@ -160,21 +169,49 @@ export async function createPaste(data: CreatePasteInput) {
       }
     }
 
+    // Handle file uploads
+    let fileData: {
+      fileKey?: string;
+      fileUrl?: string;
+      fileName?: string;
+      fileSize?: bigint;
+      fileMimeType?: string;
+    } = {};
+    if (data.pasteType === 'file' && data.fileBuffer) {
+      const fileBuffer = data.fileBuffer as Buffer;
+      const fileName = data.fileName || 'file';
+      const fileMimeType = data.fileMimeType || 'application/octet-stream';
+
+      const fileKey = generateFileKey(fileName);
+      const fileUrl = await uploadToR2(fileBuffer, fileKey, fileMimeType);
+
+      fileData = {
+        fileKey,
+        fileUrl,
+        fileName,
+        fileSize: BigInt(fileBuffer.length),
+        fileMimeType,
+      };
+
+      // For file pastes, content is just a placeholder
+      finalContent = `[File: ${fileName}]`;
+    }
+
     const pasteType = data.pasteType || (data.image ? 'image' : 'text');
     const originalFormat = data.image ? data.originalFormat || imageData.originalFormat : undefined;
 
     const paste = await prisma.paste.create({
       data: {
-        id: generatePasteId(data.language, { pasteType, originalFormat }),
+        id: generatePasteId(data.language, { pasteType, originalFormat, fileName: data.fileName }),
         content: finalContent,
-        language: pasteType === 'image' ? 'image' : data.language,
+        language: pasteType === 'image' ? 'image' : (pasteType === 'file' ? 'file' : data.language),
         title: defaultTitle,
         description: defaultDescription,
         expiresAt,
         isCompressed: shouldCompressContent,
         passwordHash,
         burnAfterRead,
-        aiGenerationStatus: 'PENDING',
+        aiGenerationStatus: pasteType === 'file' ? 'COMPLETED' : 'PENDING',
         pasteType,
         hasImage: imageData.hasImage || false,
         imageKey: imageData.imageKey,
@@ -186,10 +223,15 @@ export async function createPaste(data: CreatePasteInput) {
         originalFormat: imageData.originalFormat,
         originalMimeType: imageData.originalMimeType,
         exifData: imageData.exifData ? JSON.parse(JSON.stringify(imageData.exifData)) : null,
+        fileKey: fileData.fileKey,
+        fileUrl: fileData.fileUrl,
+        fileName: fileData.fileName,
+        fileSize: fileData.fileSize,
+        fileMimeType: fileData.fileMimeType,
       },
     });
 
-    if (content && !data.image) {
+    if (content && !data.image && pasteType !== 'file') {
       generateMetadataAsync(paste.id, content, data.language);
     } else if (data.image) {
       await prisma.paste.update({
@@ -213,13 +255,18 @@ export async function createPaste(data: CreatePasteInput) {
       hasImage: !!imageData.hasImage,
       imageUrl: imageData.imageUrl as string | undefined,
       aiGenerationStatus: paste.aiGenerationStatus,
-      pasteType: data.pasteType || 'text',
+      pasteType,
       originalFormat: imageData.originalFormat,
       originalMimeType: imageData.originalMimeType,
       imageWidth: imageData.imageWidth,
       imageHeight: imageData.imageHeight,
       imageSize: imageData.imageSize,
       exifData: imageData.exifData,
+      // File fields
+      fileUrl: fileData.fileUrl,
+      fileName: fileData.fileName,
+      fileSize: fileData.fileSize ? Number(fileData.fileSize) : undefined,
+      fileMimeType: fileData.fileMimeType,
     };
   } catch (error) {
     throw error;
@@ -288,8 +335,8 @@ export async function getPaste(data: GetPasteInput) {
       finalContent = await decompressText(compressedBuffer);
     }
 
-    const typedPaste = paste as Paste;
-    const typedUpdatedPaste = updatedPaste as Paste;
+    const typedPaste = paste as unknown as Paste;
+    const typedUpdatedPaste = updatedPaste as unknown as Paste;
 
     return {
       id: typedPaste.id,
@@ -312,6 +359,11 @@ export async function getPaste(data: GetPasteInput) {
       originalFormat: typedPaste.originalFormat,
       originalMimeType: typedPaste.originalMimeType,
       exifData: typedPaste.exifData || null,
+      // File fields
+      fileUrl: typedPaste.fileUrl,
+      fileName: typedPaste.fileName,
+      fileSize: typedPaste.fileSize ? Number(typedPaste.fileSize) : null,
+      fileMimeType: typedPaste.fileMimeType,
     };
   } catch (error) {
     throw error;
@@ -328,11 +380,17 @@ export async function deletePaste(id: string) {
       throw new Error('Paste not found');
     }
 
-    const typedPaste = paste as Paste;
+    const typedPaste = paste as unknown as Paste;
 
     if (typedPaste.hasImage && typedPaste.imageKey) {
       try {
         await deleteFromR2(typedPaste.imageKey);
+      } catch {}
+    }
+
+    if (typedPaste.fileKey) {
+      try {
+        await deleteFromR2(typedPaste.fileKey);
       } catch {}
     }
 
@@ -342,7 +400,7 @@ export async function deletePaste(id: string) {
 
     return { success: true };
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'P2025') {
+    if (error instanceof Error && 'code' in error && (error as any).code === 'P2025') {
       throw new Error('Paste not found');
     }
     throw error;

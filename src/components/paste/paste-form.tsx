@@ -14,11 +14,13 @@ import {
 } from '@/components/ui/select';
 import { EXPIRATION_OPTIONS } from '@/lib/constants';
 import { detectLanguage } from '@/lib/utils/language-detector';
-import { ImageIcon, X } from 'lucide-react';
+import { ImageIcon, FileIcon, X } from 'lucide-react';
+import { formatBytes } from '@/lib/utils/helpers';
 
 export function PasteForm() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadFileInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<MonacoEditorRef>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [content, setContent] = useState('');
@@ -27,7 +29,8 @@ export function PasteForm() {
   const [password, setPassword] = useState('');
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [pasteType, setPasteType] = useState<'text' | 'image'>('text');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [pasteType, setPasteType] = useState<'text' | 'image' | 'file'>('text');
 
   useEffect(() => {
     if (content.trim().length > 5) {
@@ -81,6 +84,26 @@ export function PasteForm() {
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const maxSize = 100 * 1024 * 1024; // 100MB
+    if (file.size > maxSize) {
+      toast.error('File is too large. Maximum size is 100MB.');
+      return;
+    }
+
+    setUploadFile(file);
+  };
+
+  const handleRemoveFile = () => {
+    setUploadFile(null);
+    if (uploadFileInputRef.current) {
+      uploadFileInputRef.current.value = '';
+    }
+  };
+
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData.items;
 
@@ -117,8 +140,8 @@ export function PasteForm() {
         e.preventDefault();
       }
 
-      if (!content.trim() && !image) {
-        toast.error('Please enter some content or upload an image');
+      if (!content.trim() && !image && !uploadFile) {
+        toast.error('Please enter some content, upload an image, or upload a file');
         return;
       }
 
@@ -137,6 +160,12 @@ export function PasteForm() {
           return;
         }
 
+        if (pasteType === 'file' && !uploadFile) {
+          toast.error('Please select a file to upload');
+          setIsSubmitting(false);
+          return;
+        }
+
         const formData = new FormData();
         formData.append('content', content);
         formData.append('language', language);
@@ -146,9 +175,12 @@ export function PasteForm() {
 
         if (image) {
           formData.append('image', image);
-
           const format = image.type.split('/')[1] || '';
           formData.append('originalFormat', format);
+        }
+
+        if (uploadFile) {
+          formData.append('file', uploadFile);
         }
 
         const response = await fetch('/api/pastes', {
@@ -156,12 +188,9 @@ export function PasteForm() {
           body: formData,
         });
 
-        // Handle rate limit responses
         if (response.status === 429) {
           const error = await response.json();
           const resetTime = error.resetTime ? new Date(error.resetTime) : null;
-
-          // Format the reset time in a user-friendly way
           const resetTimeStr = resetTime
             ? resetTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : 'some time';
@@ -172,7 +201,14 @@ export function PasteForm() {
           });
 
           setIsSubmitting(false);
-          return; // Keep user on the current page with their content preserved
+          return;
+        }
+
+        if (response.status === 413) {
+          const error = await response.json();
+          toast.error(error.error || 'File too large');
+          setIsSubmitting(false);
+          return;
         }
 
         if (!response.ok) {
@@ -181,35 +217,7 @@ export function PasteForm() {
         }
 
         const paste = await response.json();
-
-        // Check remaining rate limits from headers
-        const remaining = response.headers.get('X-RateLimit-Remaining');
-        const limit = response.headers.get('X-RateLimit-Limit');
-        const resetTime = response.headers.get('X-RateLimit-Reset');
-
-        // Show success toast with rate limit info if available
-        if (remaining && limit) {
-          const remainingNum = parseInt(remaining, 10);
-
-          if (remainingNum <= 5) {
-            // If approaching limit, show warning
-            const resetDate = resetTime ? new Date(parseInt(resetTime, 10) * 1000) : null;
-            const resetTimeStr = resetDate
-              ? resetDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-              : 'in an hour';
-
-            toast.success(`Paste created! You have ${remainingNum} pastes remaining.`, {
-              description: `Your rate limit will reset at ${resetTimeStr}.`,
-            });
-          } else {
-            // Normal success toast
-            toast.success('Paste created successfully!');
-          }
-        } else {
-          // Fallback if headers aren't available
-          toast.success('Paste created successfully!');
-        }
-
+        toast.success('Paste created successfully!');
         router.push(`/${paste.id}`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to create paste');
@@ -217,12 +225,10 @@ export function PasteForm() {
         setIsSubmitting(false);
       }
     },
-    [content, image, language, expiration, password, pasteType, router]
+    [content, image, uploadFile, language, expiration, password, pasteType, router]
   );
 
-  // Auto-focus the editor when the page loads
   useEffect(() => {
-    // Small delay to ensure the editor is fully mounted
     const timer = setTimeout(() => {
       if (editorRef.current && pasteType === 'text') {
         editorRef.current.focus();
@@ -232,10 +238,8 @@ export function PasteForm() {
     return () => clearTimeout(timer);
   }, [pasteType]);
 
-  // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Command+Enter or Ctrl+Enter to submit
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         handleSubmit();
       }
@@ -246,6 +250,18 @@ export function PasteForm() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [handleSubmit]);
+
+  // File type icon mapping
+  const getFileIcon = (filename: string): string => {
+    const ext = filename.split('.').pop()?.toLowerCase() || '';
+    const icons: Record<string, string> = {
+      apk: '\u{1F916}', pdf: '\u{1F4C4}', zip: '\u{1F4E6}', tar: '\u{1F4E6}', gz: '\u{1F4E6}',
+      '7z': '\u{1F4E6}', rar: '\u{1F4E6}', doc: '\u{1F4DD}', docx: '\u{1F4DD}',
+      xls: '\u{1F4CA}', xlsx: '\u{1F4CA}', mp4: '\u{1F3AC}', mkv: '\u{1F3AC}',
+      mp3: '\u{1F3B5}', wav: '\u{1F3B5}', exe: '\u{2699}', dmg: '\u{1F4BF}', iso: '\u{1F4BF}',
+    };
+    return icons[ext] || '\u{1F4CE}';
+  };
 
   return (
     <form
@@ -261,12 +277,11 @@ export function PasteForm() {
               <Button
                 type="button"
                 variant={pasteType === 'text' ? 'default' : 'outline'}
-                className="flex items-center rounded-r-none px-2 sm:px-3"
+                className="flex items-center rounded-r-none rounded-l-md px-2 sm:px-3"
                 onClick={() => {
                   setPasteType('text');
-                  if (image) {
-                    handleRemoveImage();
-                  }
+                  if (image) handleRemoveImage();
+                  if (uploadFile) handleRemoveFile();
                 }}
               >
                 <svg
@@ -282,43 +297,37 @@ export function PasteForm() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
-                  <path
-                    d="M7 9H17"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M7 13H17"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d="M7 17H13"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
+                  <path d="M7 9H17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M7 13H17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M7 17H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
                 Text
               </Button>
               <Button
                 type="button"
                 variant={pasteType === 'image' ? 'default' : 'outline'}
-                className="flex items-center rounded-l-none px-2 sm:px-3"
+                className="flex items-center rounded-none border-x-0 px-2 sm:px-3"
                 onClick={() => {
                   setPasteType('image');
-                  if (content) {
-                    setContent('');
-                  }
+                  if (content) setContent('');
+                  if (uploadFile) handleRemoveFile();
                 }}
               >
                 <ImageIcon className="mr-1 h-4 w-4" />
                 Image
+              </Button>
+              <Button
+                type="button"
+                variant={pasteType === 'file' ? 'default' : 'outline'}
+                className="flex items-center rounded-l-none rounded-r-md px-2 sm:px-3"
+                onClick={() => {
+                  setPasteType('file');
+                  if (content) setContent('');
+                  if (image) handleRemoveImage();
+                }}
+              >
+                <FileIcon className="mr-1 h-4 w-4" />
+                File
               </Button>
             </div>
 
@@ -330,13 +339,23 @@ export function PasteForm() {
               onChange={handleImageChange}
               className="hidden"
             />
+
+            <input
+              ref={uploadFileInputRef}
+              type="file"
+              id="file-upload"
+              onChange={handleFileChange}
+              className="hidden"
+            />
           </div>
 
           <div>
             <span className="text-muted-foreground text-xs">
               {pasteType === 'text'
                 ? 'Share code snippets, logs, or any text'
-                : 'Share images up to 50MB'}
+                : pasteType === 'image'
+                  ? 'Share images up to 50MB'
+                  : 'Share any file up to 100MB'}
             </span>
           </div>
         </div>
@@ -383,30 +402,19 @@ export function PasteForm() {
                     fill="none"
                     viewBox="0 0 24 24"
                   >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    ></circle>
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Creating...
+                  {pasteType === 'file' ? 'Uploading...' : 'Creating...'}
                 </>
               ) : (
-                'Create Paste'
+                pasteType === 'file' ? 'Upload File' : 'Create Paste'
               )}
             </Button>
             <span className="text-muted-foreground mt-1 hidden text-xs sm:inline">
               or press{' '}
               {typeof navigator !== 'undefined' && navigator.platform.includes('Mac')
-                ? '⌘+Enter'
+                ? '\u2318+Enter'
                 : 'Ctrl+Enter'}
             </span>
           </div>
@@ -426,7 +434,7 @@ export function PasteForm() {
               placeholder="Paste or type your code here..."
             />
           </div>
-        ) : (
+        ) : pasteType === 'image' ? (
           <div className="flex h-full min-h-[300px] flex-col items-center justify-center overflow-auto rounded-md border">
             {imagePreview ? (
               <div className="relative w-full max-w-full overflow-hidden">
@@ -452,8 +460,7 @@ export function PasteForm() {
                 <ImageIcon className="mx-auto mb-4 h-12 w-12 text-gray-400" />
                 <h3 className="mb-2 text-lg font-medium">Upload an Image</h3>
                 <p className="text-muted-foreground mb-4 max-w-md">
-                  Drag and drop an image here, or click the button below to select one from your
-                  device.
+                  Drag and drop an image here, or click the button below to select one from your device.
                 </p>
                 <Button
                   type="button"
@@ -462,6 +469,46 @@ export function PasteForm() {
                 >
                   <ImageIcon className="mr-2 h-4 w-4" />
                   Select Image
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex h-full min-h-[300px] flex-col items-center justify-center overflow-auto rounded-md border">
+            {uploadFile ? (
+              <div className="flex w-full max-w-md flex-col items-center gap-4 p-8">
+                <div className="absolute top-2 right-2 z-10" style={{ position: 'relative' }}>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="h-8 w-8 rounded-full p-0"
+                    onClick={handleRemoveFile}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="text-6xl">{getFileIcon(uploadFile.name)}</div>
+                <div className="text-center">
+                  <p className="text-lg font-medium break-all">{uploadFile.name}</p>
+                  <p className="text-muted-foreground text-sm">{formatBytes(uploadFile.size)}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center">
+                <FileIcon className="mx-auto mb-4 h-12 w-12 text-gray-400" />
+                <h3 className="mb-2 text-lg font-medium">Upload a File</h3>
+                <p className="text-muted-foreground mb-4 max-w-md">
+                  Upload any file up to 100MB \u2014 APKs, PDFs, ZIPs, videos, documents, and more.
+                  Get a shareable download link.
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => uploadFileInputRef.current?.click()}
+                  className="mx-auto flex items-center"
+                >
+                  <FileIcon className="mr-2 h-4 w-4" />
+                  Select File
                 </Button>
               </div>
             )}

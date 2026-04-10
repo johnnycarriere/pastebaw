@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { MonacoEditor } from '@/components/editor/monaco-editor';
 import { Button } from '@/components/ui/button';
-import { formatDate } from '@/lib/utils/helpers';
+import { formatDate, formatBytes } from '@/lib/utils/helpers';
 import { ExifViewer } from '@/components/paste/exif-viewer';
 import {
   AlertTriangleIcon,
@@ -13,7 +13,26 @@ import {
   DownloadIcon,
   FlameIcon,
   ImageIcon,
+  FileIcon,
+  CopyIcon,
 } from 'lucide-react';
+
+// File type icon mapping
+const fileIcons: Record<string, string> = {
+  apk: '\u{1F916}', pdf: '\u{1F4C4}', zip: '\u{1F4E6}', tar: '\u{1F4E6}', gz: '\u{1F4E6}',
+  '7z': '\u{1F4E6}', rar: '\u{1F4E6}', doc: '\u{1F4DD}', docx: '\u{1F4DD}',
+  xls: '\u{1F4CA}', xlsx: '\u{1F4CA}', ppt: '\u{1F4CA}', pptx: '\u{1F4CA}',
+  mp4: '\u{1F3AC}', mkv: '\u{1F3AC}', avi: '\u{1F3AC}', mov: '\u{1F3AC}',
+  mp3: '\u{1F3B5}', wav: '\u{1F3B5}', flac: '\u{1F3B5}',
+  png: '\u{1F5BC}', jpg: '\u{1F5BC}', jpeg: '\u{1F5BC}', gif: '\u{1F5BC}', svg: '\u{1F5BC}', webp: '\u{1F5BC}',
+  exe: '\u{2699}', dmg: '\u{1F4BF}', iso: '\u{1F4BF}',
+  txt: '\u{1F4C3}', csv: '\u{1F4CA}',
+};
+
+function getFileIcon(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  return fileIcons[ext] || '\u{1F4CE}';
+}
 
 interface PasteViewProps {
   paste: {
@@ -35,6 +54,10 @@ interface PasteViewProps {
     originalMimeType?: string;
     pasteType?: string;
     exifData?: Record<string, unknown> | null;
+    fileUrl?: string;
+    fileName?: string;
+    fileSize?: number | null;
+    fileMimeType?: string;
   };
 }
 
@@ -149,6 +172,13 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
     toast.success('Content copied to clipboard');
   };
 
+  const handleCopyDirectLink = () => {
+    if (paste.fileUrl) {
+      navigator.clipboard.writeText(paste.fileUrl);
+      toast.success('Direct download link copied');
+    }
+  };
+
   const handleBurn = async () => {
     if (hasBeenBurned) return;
 
@@ -253,6 +283,9 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
 
   const hasExifData = paste.exifData && Object.keys(paste.exifData).length > 0;
 
+  const isFilePaste = paste.pasteType === 'file';
+  const isImagePaste = paste.pasteType === 'image' || paste.hasImage;
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-col border-b p-3 sm:p-4">
@@ -260,7 +293,7 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
           <div className="flex flex-col">
             <span className="text-sm font-medium">
               {paste.title ||
-                `${paste.language.charAt(0).toUpperCase() + paste.language.slice(1)} Paste`}
+                (isFilePaste ? paste.fileName : `${paste.language.charAt(0).toUpperCase() + paste.language.slice(1)} Paste`)}
             </span>
             {isLoadingMetadata ? (
               <div className="text-muted-foreground mb-1 flex items-center text-xs">
@@ -270,19 +303,8 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
                   fill="none"
                   viewBox="0 0 24 24"
                 >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  ></circle>
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
                 Generating AI description...
               </div>
@@ -292,17 +314,47 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
               )
             )}
             <span className="text-muted-foreground text-xs">
-              Created {formatDate(paste.createdAt)} • {paste.views} view
+              Created {formatDate(paste.createdAt)} \u2022 {paste.views} view
               {paste.views !== 1 ? 's' : ''}
-              {paste.expiresAt && ` • Expires ${formatDate(paste.expiresAt)}`}
-              {paste.imageWidth &&
-                paste.imageHeight &&
-                ` • ${paste.imageWidth} × ${paste.imageHeight}`}
+              {paste.expiresAt && ` \u2022 Expires ${formatDate(paste.expiresAt)}`}
+              {paste.imageWidth && paste.imageHeight && ` \u2022 ${paste.imageWidth} \u00D7 ${paste.imageHeight}`}
+              {isFilePaste && paste.fileSize && ` \u2022 ${formatBytes(paste.fileSize)}`}
             </span>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {paste.pasteType === 'image' || paste.hasImage ? (
+            {isFilePaste ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyLink}
+                  className="h-8 px-2 sm:px-3"
+                >
+                  Copy Link
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyDirectLink}
+                  className="h-8 px-2 sm:px-3"
+                >
+                  <CopyIcon className="mr-1 h-4 w-4" />
+                  Direct Link
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => {
+                    window.open(`/api/pastes/${paste.id}/download`, '_blank');
+                  }}
+                  className="h-8 px-2 sm:px-3"
+                >
+                  <DownloadIcon className="mr-1 h-4 w-4" />
+                  Download
+                </Button>
+              </>
+            ) : isImagePaste ? (
               <>
                 <Button
                   variant="outline"
@@ -344,19 +396,8 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
                           fill="none"
                           viewBox="0 0 24 24"
                         >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          ></circle>
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                         <span className="hidden sm:inline">Calculating...</span>
                         <span className="sm:hidden">...</span>
@@ -439,7 +480,30 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
           </div>
         )}
 
-        {paste.pasteType === 'image' || paste.hasImage ? (
+        {isFilePaste ? (
+          <div className="flex h-full flex-col items-center justify-center">
+            <div className="flex max-w-lg flex-col items-center gap-6 p-8 text-center">
+              <div className="text-7xl">{getFileIcon(paste.fileName || '')}</div>
+              <div>
+                <h2 className="mb-2 text-2xl font-semibold break-all">{paste.fileName}</h2>
+                <p className="text-muted-foreground">
+                  {paste.fileSize ? formatBytes(paste.fileSize) : 'Unknown size'}
+                  {paste.fileMimeType && ` \u2022 ${paste.fileMimeType}`}
+                </p>
+              </div>
+              <Button
+                size="lg"
+                onClick={() => {
+                  window.open(`/api/pastes/${paste.id}/download`, '_blank');
+                }}
+                className="mt-2 px-8"
+              >
+                <DownloadIcon className="mr-2 h-5 w-5" />
+                Download File
+              </Button>
+            </div>
+          </div>
+        ) : isImagePaste ? (
           <div className="flex flex-col items-center">
             <div className="overflow-hidden rounded-md border">
               <img
@@ -484,19 +548,8 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
                           fill="none"
                           viewBox="0 0 24 24"
                         >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          ></circle>
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                         Burning...
                       </>
@@ -516,7 +569,16 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
 
       <div className="flex flex-col border-t p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
         <div className="flex items-center">
-          {paste.pasteType === 'image' || paste.hasImage ? (
+          {isFilePaste ? (
+            <>
+              <div className="bg-primary/10 text-primary rounded-full px-3 py-1 text-xs font-medium">
+                File
+              </div>
+              <div className="text-muted-foreground ml-2 text-sm">
+                {paste.fileName?.split('.').pop()?.toUpperCase() || 'Unknown'} file
+              </div>
+            </>
+          ) : isImagePaste ? (
             <>
               <div className="bg-primary/10 text-primary rounded-full px-3 py-1 text-xs font-medium">
                 Image
@@ -544,7 +606,7 @@ export function PasteView({ paste: initialPaste }: PasteViewProps) {
             New Paste
           </Button>
           <span className="text-muted-foreground mt-1 hidden text-xs sm:inline">
-            or press {navigator.platform.includes('Mac') ? '⌘+N' : 'Ctrl+N'}
+            or press {navigator.platform.includes('Mac') ? '\u2318+N' : 'Ctrl+N'}
           </span>
         </div>
       </div>

@@ -15,33 +15,41 @@ export const createPasteSchema = z
     expiration: z.enum(['never', '1h', '1d', '7d', '30d', 'burn']).default('never'),
     password: z.string().optional().nullable(),
     image: z.string().optional(), // Base64 encoded image data
-    originalFormat: z.string().optional().nullable(), // Original image format (e.g., 'png', 'jpeg')
-    pasteType: z.enum(['text', 'image']).default('text'), // Type of paste
+    originalFormat: z.string().optional().nullable(),
+    pasteType: z.enum(['text', 'image', 'file']).default('text'),
+    // File upload fields (populated by API route, not sent by client directly)
+    fileName: z.string().optional(),
+    fileSize: z.number().optional(),
+    fileMimeType: z.string().optional(),
+    fileBuffer: z.any().optional(), // Buffer, handled at runtime
   })
   .refine(
     data => {
       if (data.pasteType === 'text') {
         return !!data.content;
-      } else {
+      } else if (data.pasteType === 'image') {
         return !!data.image;
+      } else if (data.pasteType === 'file') {
+        return !!data.fileBuffer;
       }
+      return true;
     },
     {
-      message: 'Content is required for text pastes, image is required for image pastes',
+      message: 'Content is required for text pastes, image for image pastes, file for file pastes',
       path: ['content'],
     }
   )
   .refine(
     data => {
-      // Ensure we don't have both content and image
       if (data.pasteType === 'text') {
-        return !data.image;
-      } else {
+        return !data.image && !data.fileBuffer;
+      } else if (data.pasteType === 'image') {
         return !data.content || data.content.trim() === '';
       }
+      return true;
     },
     {
-      message: 'Cannot have both content and image in the same paste',
+      message: 'Cannot mix content types in the same paste',
       path: ['content'],
     }
   );
@@ -51,8 +59,6 @@ export const getPasteSchema = z.object({
   id: z.string().min(1, 'Paste ID is required'),
   password: z.string().optional(),
 });
-
-// Paste deletion functionality removed for security reasons
 
 // TypeScript types derived from Zod schemas
 export type CreatePasteInput = z.infer<typeof createPasteSchema>;
