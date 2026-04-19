@@ -114,7 +114,7 @@ export default function TermsPage() {
           </CardHeader>
           <CardContent>
             <p>
-              If you have any questions about these Terms, please contact us at terms@pastebaw.duckdns.org.
+              If you have any questions about these Terms, please contact us at terms@bawapps.com.
             </p>
           </CardContent>
         </Card>

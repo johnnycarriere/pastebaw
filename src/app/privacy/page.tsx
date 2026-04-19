@@ -92,7 +92,7 @@ export default function PrivacyPage() {
           <CardContent>
             <p>
               If you have any questions about this Privacy Policy, please contact us at
-              privacy@pastebaw.duckdns.org.
+              privacy@bawapps.com.
             </p>
           </CardContent>
         </Card>
