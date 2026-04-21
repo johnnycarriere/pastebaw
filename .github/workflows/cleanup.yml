@@ -2,20 +2,33 @@ name: Scheduled Cleanup
 
 on:
   schedule:
-    # Run every hour at minute 0
     - cron: '0 * * * *'
   workflow_dispatch:
-    # Allow manual triggering
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
       - name: Cleanup expired pastes
-        run: |
-          curl -X POST ${{ secrets.DUSTEBIN_URL }}/api/admin/cleanup \
-          -H "Authorization: Bearer ${{ secrets.CLEANUP_API_KEY }}" \
-          -H "Content-Type: application/json"
         env:
           DUSTEBIN_URL: ${{ secrets.DUSTEBIN_URL }}
           CLEANUP_API_KEY: ${{ secrets.CLEANUP_API_KEY }}
+        run: |
+          set -e
+
+          if [ -z "$DUSTEBIN_URL" ]; then
+            echo "DUSTEBIN_URL is missing"
+            exit 1
+          fi
+
+          if [ -z "$CLEANUP_API_KEY" ]; then
+            echo "CLEANUP_API_KEY is missing"
+            exit 1
+          fi
+
+          echo "Calling cleanup endpoint..."
+
+          curl --fail --show-error --silent \
+            -X POST "${DUSTEBIN_URL}/api/admin/cleanup" \
+            -H "Authorization: Bearer ${CLEANUP_API_KEY}" \
+            -H "Content-Type: application/json"
